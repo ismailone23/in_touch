@@ -1,77 +1,62 @@
 "use client";
 
-import { DashboardProvider } from "@/contexts/DashboardContext";
+import { DashboardProvider, useDashboard } from "@/contexts/DashboardContext";
 import { useDashboardState } from "@/hooks/useDashboardState";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import MessagesPanel from "@/components/dashboard/MessagesPanel";
+import { CheckCircle2, XCircle, X } from "lucide-react";
+
+/**
+ * Toast notification — slides in from top-right, Discord style
+ */
+function Toast() {
+  const { toast, showToast } = useDashboard();
+
+  if (!toast) return null;
+
+  return (
+    <div className="fixed right-4 top-4 z-[100] animate-in slide-in-from-top-2 fade-in duration-300">
+      <div
+        className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-xl ${
+          toast.type === "success"
+            ? "border-[hsl(139,47%,30%)] bg-[hsl(139,47%,15%)] text-[hsl(139,47%,75%)]"
+            : "border-[hsl(0,60%,30%)] bg-[hsl(0,60%,15%)] text-[hsl(0,60%,75%)]"
+        }`}
+      >
+        {toast.type === "success" ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        ) : (
+          <XCircle className="h-4 w-4 shrink-0" />
+        )}
+        <p className="max-w-xs text-sm font-medium">{toast.message}</p>
+        <button
+          onClick={() => showToast("", "success")}
+          className="ml-2 shrink-0 rounded-md p-0.5 opacity-60 transition hover:opacity-100"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Inner component that uses the dashboard state hook
- * This is wrapped by the provider pattern below
  */
 function DashboardContent() {
   const dashboardState = useDashboardState();
 
   return (
     <DashboardProvider value={dashboardState}>
-      <div className="h-screen flex bg-background">
+      <div className="flex h-screen overflow-hidden">
         <DashboardSidebar />
         <MessagesPanel />
+        <Toast />
       </div>
     </DashboardProvider>
   );
 }
 
-/**
- * Dashboard page component
- *
- * Architecture Overview:
- * =====================
- *
- * State Management:
- * - useDashboardState() hook: Centralized state management
- *   - Auth: token, userId
- *   - UI: activeTab, selectedFriend/Group
- *   - Data: friends, requests, groups, messages
- *   - WebSocket: connection, messaging
- *
- * Context:
- * - DashboardContext: Provides all state and actions to children
- *   - Prevents prop drilling
- *   - Allows any component to access dashboard state
- *
- * Component Tree:
- * - DashboardSidebar
- *   - DashboardSidebar.tsx: Main sidebar with tab navigation
- *   - MessagesList.tsx: List of friends and groups for messaging
- *   - FriendsList.tsx: Add friends, manage friend requests
- *   - GroupsList.tsx: Create groups, view existing groups
- *
- * - MessagesPanel
- *   - MessagesPanel.tsx: Display messages and input area
- *
- * WebSocket Architecture:
- * - useWebSocket hook: Encapsulates all WebSocket logic
- *   - Connection management
- *   - Auto-reconnect with exponential backoff (1s → 30s)
- *   - Message event handling
- *   - Proper cleanup on disconnect
- *
- * Data Fetching:
- * - useDashboardApi hook: All API calls
- *   - fetchFriends, fetchRequests, fetchGroups
- *   - sendFriendRequest, acceptRequest, removeFriend
- *   - Error handling and loading states
- *
- * Message Flow:
- * 1. User types message and hits Enter or clicks Send
- * 2. sendMessage() called via MessagesPanel
- * 3. WebSocket send via wsSend() from useWebSocket
- * 4. Server receives message, broadcasts to recipient
- * 5. WebSocket onMessage fires, calls callback
- * 6. Message added to state via addMessage()
- * 7. UI re-renders with new message
- */
 export default function Dashboard() {
   return <DashboardContent />;
 }

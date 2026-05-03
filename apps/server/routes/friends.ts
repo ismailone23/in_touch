@@ -3,6 +3,7 @@ import authMiddleware, { type JwtPayload } from "../utils/auth-middleware";
 import { db, friends, users } from "@repo/db";
 import { and, eq, or } from "drizzle-orm";
 import { sendFriendRequestEmail } from "../services/notification-mail";
+import { sendToUser } from "../index";
 
 type Variables = {
   user: JwtPayload;
@@ -18,7 +19,7 @@ app.post("/request", async (c) => {
   const { email } = await c.req.json();
 
   if (!email) {
-    return c.json({ error: "email required" }, 400);
+    return c.json({ error: "Email is required" }, 400);
   }
 
   const [targetUser] = await db
@@ -27,11 +28,11 @@ app.post("/request", async (c) => {
     .where(eq(users.email, email));
 
   if (!targetUser) {
-    return c.json({ error: "User not found" }, 404);
+    return c.json({ error: "No user found with that email" }, 404);
   }
 
   if (user.userId === targetUser.id) {
-    return c.json({ error: "Cannot add yourself" }, 400);
+    return c.json({ error: "You cannot send a request to yourself" }, 400);
   }
 
   // Check if already friends or request pending
@@ -52,21 +53,18 @@ app.post("/request", async (c) => {
     );
 
   if (existing.length) {
-    return c.json(
-      { error: "Friend request already exists or already friends" },
-      400,
-    );
+    const status = existing[0]?.status;
+    if (status === "accepted") {
+      return c.json({ error: "You are already friends with this user" }, 400);
+    }
+    return c.json({ error: "A friend request is already pending" }, 400);
   }
 
-  // Get requester and recipient info for email
-  const [requester, recipient] = await Promise.all([
-    db.select().from(users).where(eq(users.id, user.userId)),
-    Promise.resolve([targetUser]),
-  ]);
-
-  if (!recipient.length) {
-    return c.json({ error: "User not found" }, 404);
-  }
+  // Get requester info for notification
+  const [requester] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, user.userId));
 
   const newRequest = await db
     .insert(friends)
@@ -77,10 +75,22 @@ app.post("/request", async (c) => {
     })
     .returning();
 
+  // Send real-time WebSocket notification to the recipient
+  sendToUser(targetUser.id, {
+    type: "friend_request",
+    data: {
+      id: newRequest[0]!.id,
+      userId: user.userId,
+      requesterName: requester?.name || "Someone",
+      requesterEmail: requester?.email || "",
+      createdAt: newRequest[0]!.createdAt?.toISOString() || new Date().toISOString(),
+    },
+  });
+
   // Send email notification (fire and forget)
   sendFriendRequestEmail(
-    recipient[0]!.email,
-    requester[0]?.name || "A user",
+    targetUser.email,
+    requester?.name || "A user",
     user.userId,
   ).catch((err) => console.error("Failed to send email:", err));
 
@@ -91,6 +101,10 @@ app.post("/request", async (c) => {
 app.post("/accept", async (c) => {
   const user = c.get("user");
   const { friendId } = await c.req.json();
+
+  if (!friendId) {
+    return c.json({ error: "Friend ID is required" }, 400);
+  }
 
   const request = await db
     .select()
@@ -112,6 +126,25 @@ app.post("/accept", async (c) => {
     .set({ status: "accepted" })
     .where(eq(friends.id, request[0]!.id))
     .returning();
+
+  // Get both users' info for WS notification
+  const [acceptor] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, user.userId));
+
+  // Notify the original requester that their request was accepted
+  sendToUser(friendId, {
+    type: "friend_accepted",
+    data: {
+      id: updated[0]!.id,
+      userId: user.userId,
+      friendId: friendId,
+      friendName: acceptor?.name || "Someone",
+      friendEmail: acceptor?.email || "",
+      status: "accepted",
+    },
+  });
 
   return c.json(updated[0]);
 });
@@ -137,14 +170,21 @@ app.post("/remove", async (c) => {
 
   await db.delete(friends).where(eq(friends.id, relation[0]!.id));
 
+  // Notify the other user
+  sendToUser(friendId, {
+    type: "friend_removed",
+    data: { userId: user.userId },
+  });
+
   return c.json({ message: "Relation removed" });
 });
 
-// Get all friends
+// Get all friends (bidirectional — works regardless of who sent the request)
 app.get("/list", async (c) => {
   const user = c.get("user");
 
-  const friendsList = await db
+  // Friends where current user sent the request
+  const sentList = await db
     .select({
       id: friends.id,
       userId: friends.userId,
@@ -159,7 +199,23 @@ app.get("/list", async (c) => {
       and(eq(friends.userId, user.userId), eq(friends.status, "accepted")),
     );
 
-  return c.json(friendsList);
+  // Friends where current user received the request
+  const receivedList = await db
+    .select({
+      id: friends.id,
+      userId: friends.friendId, // swap so friendId always = the other person
+      friendId: friends.userId,
+      status: friends.status,
+      friendName: users.name,
+      friendEmail: users.email,
+    })
+    .from(friends)
+    .innerJoin(users, eq(friends.userId, users.id))
+    .where(
+      and(eq(friends.friendId, user.userId), eq(friends.status, "accepted")),
+    );
+
+  return c.json([...sentList, ...receivedList]);
 });
 
 // Get pending requests

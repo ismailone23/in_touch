@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { rateLimiter } from "hono-rate-limiter";
 import authApp from "./routes/auth";
 import messageApp from "./routes/message";
 import friendsApp from "./routes/friends";
@@ -9,6 +10,17 @@ import { db, groupMembers, messages } from "@repo/db";
 import { eq } from "drizzle-orm";
 
 const app = new Hono();
+
+// Apply rate limiter
+const limiter = rateLimiter({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  limit: 100, // Limit each IP to 100 requests per window
+  standardHeaders: "draft-6", // draft-6: RateLimit-* headers
+  keyGenerator: (c) => c.req.header("x-forwarded-for") || c.req.header("cf-connecting-ip") || "anonymous",
+  message: "Too many requests from this IP, please try again later."
+});
+
+app.use("*", limiter);
 
 const allowedOrigins = (
   process.env.CORS_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000"
@@ -61,7 +73,7 @@ app.route("/groups", groupsApp);
 
 const port = Number(process.env.PORT) || 8080;
 
-const clients = new Map<string, Set<any>>();
+export const clients = new Map<string, Set<any>>();
 
 function readCookieValue(
   cookieHeader: string | null | undefined,
@@ -115,7 +127,31 @@ function removeClient(userId: string, ws: any) {
   }
 }
 
-function sendToUser(userId: string, payload: unknown) {
+export function isUserOnline(userId: string): boolean {
+  return clients.has(userId) && (clients.get(userId)?.size ?? 0) > 0;
+}
+
+export function getOnlineUserIds(): string[] {
+  return Array.from(clients.keys());
+}
+
+function broadcastPresence(userId: string, status: "online" | "offline") {
+  const payload = JSON.stringify({
+    type: "presence_update",
+    data: { userId, status },
+  });
+
+  clients.forEach((sockets, uid) => {
+    if (uid === userId) return;
+    sockets.forEach((socket) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(payload);
+      }
+    });
+  });
+}
+
+export function sendToUser(userId: string, payload: unknown) {
   const sockets = clients.get(userId);
   if (!sockets) {
     return;
@@ -137,21 +173,48 @@ Bun.serve({
   fetch(req, server) {
     const url = new URL(req.url);
 
+    if (url.pathname === "/messages/ws" && req.method === "OPTIONS") {
+      const origin = req.headers.get("origin") ?? "";
+      const isAllowed = allowedOrigins.includes(origin);
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": isAllowed
+            ? origin
+            : (allowedOrigins[0] ?? ""),
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          "Access-Control-Allow-Credentials": "true",
+        },
+      });
+    }
+
     if (url.pathname === "/messages/ws") {
       try {
         const token =
           url.searchParams.get("token") ||
           readCookieValue(req.headers.get("cookie"), "token");
+        console.log("WS upgrade attempt, token present:", !!token); // add this
 
         if (!token) {
+          console.log("WS rejected: no token"); // add this
+
           return new Response("Unauthorized", { status: 401 });
         }
 
         const userId = verifyUserId(token);
+        console.log("WS upgrade for userId:", userId); // add this
+
+        const origin = req.headers.get("origin") ?? "";
+        const isAllowed = allowedOrigins.includes(origin);
+
         const upgraded = server.upgrade(req, {
-          data: {
-            userId,
-          } as any,
+          headers: {
+            "Access-Control-Allow-Origin": isAllowed
+              ? origin
+              : (allowedOrigins[0] ?? ""),
+            "Access-Control-Allow-Credentials": "true",
+          },
+          data: { userId } as any,
         });
 
         if (!upgraded) {
@@ -172,7 +235,20 @@ Bun.serve({
       console.log("WS connected");
 
       if (ws.data?.userId) {
+        const wasOnline = isUserOnline(ws.data.userId);
         addClient(ws.data.userId, ws);
+
+        // Broadcast online status to others (only if they were offline before)
+        if (!wasOnline) {
+          broadcastPresence(ws.data.userId, "online");
+        }
+
+        // Send current online users to this new connection
+        const onlineUsers = getOnlineUserIds();
+        ws.send(JSON.stringify({
+          type: "presence_list",
+          data: { onlineUsers },
+        }));
       }
     },
 
@@ -276,6 +352,11 @@ Bun.serve({
     close(ws: any) {
       if (ws.data?.userId) {
         removeClient(ws.data.userId, ws);
+
+        // Broadcast offline status (only if fully disconnected)
+        if (!isUserOnline(ws.data.userId)) {
+          broadcastPresence(ws.data.userId, "offline");
+        }
       }
       console.log("WS disconnected");
     },

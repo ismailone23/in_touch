@@ -14,7 +14,9 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
 }: UseWebSocketOptions<TMessage>) {
   const ws = useRef<WebSocket | null>(null);
   const authTokenRef = useRef<string | null | undefined>(authToken);
-  const connectRef = useRef<() => void>(() => {});
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  const connectRef = useRef<(tokenOverride?: string) => void>(() => {});
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const reconnectDelay = useRef(1000);
@@ -22,9 +24,18 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
   const shouldReconnect = useRef(true);
   const [isReady, setIsReady] = useState(false);
 
+  // Keep refs in sync without triggering re-renders / dep changes
   useEffect(() => {
     authTokenRef.current = authToken;
   }, [authToken]);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   const attemptReconnect = useCallback(() => {
     if (!shouldReconnect.current) {
@@ -60,7 +71,10 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
         }
 
         const wsUrl = new URL(getWebSocketUrl("/messages/ws"));
+
         const token = tokenOverride ?? authTokenRef.current;
+        console.log("WS connecting to:", wsUrl.toString());
+        console.log("Token present:", !!token, "length:", token?.length);
 
         if (token) {
           wsUrl.searchParams.set("token", token);
@@ -83,7 +97,7 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
         ws.current.onmessage = (event) => {
           try {
             const data = JSON.parse(String(event.data)) as TMessage;
-            onMessage(data);
+            onMessageRef.current(data);
           } catch (error) {
             console.error("Failed to parse WebSocket message:", error);
           }
@@ -91,7 +105,7 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
 
         ws.current.onerror = (error) => {
           console.error("WebSocket error:", error);
-          onError?.(error);
+          onErrorRef.current?.(error);
         };
 
         ws.current.onclose = () => {
@@ -103,7 +117,7 @@ export function useWebSocket<TMessage = unknown, TOutgoing = unknown>({
         console.error("Failed to create WebSocket:", error);
       }
     },
-    [onMessage, onError, attemptReconnect],
+    [attemptReconnect],
   );
 
   connectRef.current = connect;

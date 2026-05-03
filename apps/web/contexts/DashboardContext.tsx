@@ -38,7 +38,7 @@ export interface Group {
   createdAt: string;
 }
 
-export type TabType = "messages" | "friends" | "groups";
+export type TabType = "dm" | "groups" | "friends";
 
 export interface DashboardContextType {
   userId: string;
@@ -54,6 +54,7 @@ export interface DashboardContextType {
   messages: Message[];
   selectedFriend: Friend | null;
   selectedGroup: Group | null;
+  onlineUsers: Set<string>;
 
   // Setters
   setSelectedFriend: (friend: Friend | null) => void;
@@ -67,13 +68,19 @@ export interface DashboardContextType {
   wsReady: boolean;
   sendMessage: (content: string) => void;
 
+  // Toast
+  toast: { message: string; type: "success" | "error" } | null;
+  showToast: (message: string, type: "success" | "error") => void;
+
   // API Actions
   fetchFriends: () => Promise<void>;
   fetchRequests: () => Promise<void>;
   fetchGroups: () => Promise<void>;
-  sendFriendRequest: (email: string) => Promise<void>;
+  sendFriendRequest: (email: string) => Promise<{ success: boolean; error?: string }>;
   acceptRequest: (requesterId: string) => Promise<void>;
   removeFriend: (friendId: string) => Promise<void>;
+  createGroup: (name: string, description?: string) => Promise<boolean>;
+  addMemberToGroup: (groupId: string, memberId: string) => Promise<boolean>;
   handleLogout: () => void;
 }
 
