@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import authMiddleware, { type JwtPayload } from "../utils/auth-middleware";
 import { db, friends, users } from "@repo/db";
 import { and, eq, or } from "drizzle-orm";
+import { sendFriendRequestEmail } from "../services/notification-mail";
 
 type Variables = {
   user: JwtPayload;
@@ -14,13 +15,22 @@ app.use("*", authMiddleware);
 // Send friend request
 app.post("/request", async (c) => {
   const user = c.get("user");
-  const { friendId } = await c.req.json();
+  const { email } = await c.req.json();
 
-  if (!friendId) {
-    return c.json({ error: "friendId required" }, 400);
+  if (!email) {
+    return c.json({ error: "email required" }, 400);
   }
 
-  if (user.userId === friendId) {
+  const [targetUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email));
+
+  if (!targetUser) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  if (user.userId === targetUser.id) {
     return c.json({ error: "Cannot add yourself" }, 400);
   }
 
@@ -30,8 +40,14 @@ app.post("/request", async (c) => {
     .from(friends)
     .where(
       or(
-        and(eq(friends.userId, user.userId), eq(friends.friendId, friendId)),
-        and(eq(friends.userId, friendId), eq(friends.friendId, user.userId)),
+        and(
+          eq(friends.userId, user.userId),
+          eq(friends.friendId, targetUser.id),
+        ),
+        and(
+          eq(friends.userId, targetUser.id),
+          eq(friends.friendId, user.userId),
+        ),
       ),
     );
 
@@ -42,14 +58,31 @@ app.post("/request", async (c) => {
     );
   }
 
+  // Get requester and recipient info for email
+  const [requester, recipient] = await Promise.all([
+    db.select().from(users).where(eq(users.id, user.userId)),
+    Promise.resolve([targetUser]),
+  ]);
+
+  if (!recipient.length) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
   const newRequest = await db
     .insert(friends)
     .values({
       userId: user.userId,
-      friendId,
+      friendId: targetUser.id,
       status: "pending",
     })
     .returning();
+
+  // Send email notification (fire and forget)
+  sendFriendRequestEmail(
+    recipient[0]!.email,
+    requester[0]?.name || "A user",
+    user.userId,
+  ).catch((err) => console.error("Failed to send email:", err));
 
   return c.json(newRequest[0]);
 });
