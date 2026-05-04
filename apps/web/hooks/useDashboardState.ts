@@ -10,6 +10,7 @@ import {
 } from "@/contexts/DashboardContext";
 import { useWebSocket } from "./useWebSocket";
 import { useDashboardApi } from "./useDashboardApi";
+import { useWebRTC } from "./useWebRTC";
 
 export function useDashboardState(): DashboardContextType {
   const router = useRouter();
@@ -69,6 +70,38 @@ export function useDashboardState(): DashboardContextType {
     [],
   );
 
+  const handleMessageRef = useRef<(data: Message) => void>(() => {});
+
+  const handleWsError = useCallback((error: Event) => {
+    console.error("WebSocket error:", error);
+  }, []);
+
+  const {
+    connect: connectWs,
+    send: wsSend,
+    disconnect: disconnectWs,
+    isReady,
+  } = useWebSocket<Message>({
+    authToken,
+    onMessage: (data) => handleMessageRef.current(data),
+    onError: handleWsError,
+  });
+
+  const {
+    callState,
+    localVideoRef,
+    remoteVideoRef,
+    startCall,
+    acceptCall,
+    endCall,
+    handleOffer,
+    handleAnswer,
+    handleIceCandidate,
+  } = useWebRTC({
+    userId: userIdRef.current,
+    wsSend,
+  });
+
   // WebSocket hook — handle all WS message types
   const handleMessage = useCallback(
     (data: Message) => {
@@ -84,6 +117,22 @@ export function useDashboardState(): DashboardContextType {
             "success",
           );
         }
+        return;
+      }
+
+      // WebRTC Signaling
+      if (data.type === "call_offer" && data.data) {
+        const fromId = (data.data as any).from;
+        const offer = (data.data as any).offer;
+        handleOffer(fromId, offer);
+        return;
+      }
+      if (data.type === "call_answer" && data.data) {
+        handleAnswer((data.data as any).answer);
+        return;
+      }
+      if (data.type === "ice_candidate" && data.data) {
+        handleIceCandidate((data.data as any).candidate);
         return;
       }
 
@@ -149,23 +198,13 @@ export function useDashboardState(): DashboardContextType {
         return;
       }
     },
-    [showToast],
+    [showToast, handleOffer, handleAnswer, handleIceCandidate],
   );
 
-  const handleWsError = useCallback((error: Event) => {
-    console.error("WebSocket error:", error);
-  }, []);
-
-  const {
-    connect: connectWs,
-    send: wsSend,
-    disconnect: disconnectWs,
-    isReady,
-  } = useWebSocket<Message>({
-    authToken,
-    onMessage: handleMessage,
-    onError: handleWsError,
-  });
+  // Keep the ref updated with the latest handleMessage that has fresh dependencies
+  useEffect(() => {
+    handleMessageRef.current = handleMessage;
+  }, [handleMessage]);
 
   const refreshData = useCallback(async () => {
     const [friendsData, requestsData, groupsData] = await Promise.all([
@@ -292,7 +331,8 @@ export function useDashboardState(): DashboardContextType {
     return () => {
       cancelled = true;
     };
-  }, [selectedFriend, selectedGroup, fetchDirectMessages, fetchGroupMessages, bootstrapping]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFriend, selectedGroup, bootstrapping]);
 
   // Send message
   const sendMessage = useCallback(
@@ -455,5 +495,13 @@ export function useDashboardState(): DashboardContextType {
     createGroup,
     addMemberToGroup,
     handleLogout,
+
+    // WebRTC
+    callState,
+    startCall,
+    acceptCall,
+    endCall,
+    localVideoRef,
+    remoteVideoRef,
   };
 }

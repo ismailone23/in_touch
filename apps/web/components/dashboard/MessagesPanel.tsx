@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { Plus, Smile, SendHorizontal, Hash, ArrowLeft, UserPlus } from "lucide-react";
+import { Plus, Smile, SendHorizontal, Hash, ArrowLeft, UserPlus, Phone, PhoneOff, PhoneCall } from "lucide-react";
 import { useDashboard } from "@/contexts/DashboardContext";
 import {
   Dialog,
@@ -32,6 +32,12 @@ export default function MessagesPanel() {
     setSelectedGroup,
     friends,
     addMemberToGroup,
+    callState,
+    startCall,
+    acceptCall,
+    endCall,
+    localVideoRef,
+    remoteVideoRef,
   } = useDashboard();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -230,7 +236,93 @@ export default function MessagesPanel() {
             </DialogContent>
           </Dialog>
         )}
+        
+        {/* P2P Call Button (DMs only) */}
+        {!isGroup && selectedFriend && (
+          <button
+            onClick={() => startCall(selectedFriend.friendId, selectedFriend.friendName)}
+            disabled={!friendOnline || callState.status !== "idle"}
+            className="flex h-8 w-8 items-center justify-center rounded text-[hsl(215,9%,55%)] transition hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+            title={friendOnline ? "Start Voice/Video Call" : "User is offline"}
+          >
+            <Phone className="h-5 w-5" />
+          </button>
+        )}
       </div>
+
+      {/* Incoming Call Overlay */}
+      {callState.status === "incoming" && (
+        <div className="absolute top-16 right-4 z-50 w-72 rounded-lg border border-[hsl(228,6%,30%)] bg-[hsl(228,6%,15%)] p-4 shadow-2xl animate-in slide-in-from-top-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[hsl(235,86%,65%)]">
+              <PhoneCall className="h-6 w-6 text-white animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Incoming Call...</h3>
+              <p className="text-xs text-[hsl(215,9%,65%)]">{callState.peerName} is calling you.</p>
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={endCall}
+              className="flex-1 rounded bg-[hsl(0,60%,50%)] py-2 text-sm font-medium text-white transition hover:bg-[hsl(0,60%,60%)]"
+            >
+              Decline
+            </button>
+            <button
+              onClick={acceptCall}
+              className="flex-1 rounded bg-[hsl(139,47%,44%)] py-2 text-sm font-medium text-white transition hover:bg-[hsl(139,47%,54%)]"
+            >
+              Accept
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active Call UI */}
+      {(callState.status === "calling" || callState.status === "connected") && (
+        <div className="absolute inset-0 z-40 flex flex-col bg-black/95 backdrop-blur-sm">
+          <div className="flex flex-1 items-center justify-center p-4">
+            <div className="relative aspect-video w-full max-w-4xl overflow-hidden rounded-xl bg-gray-900 shadow-2xl">
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+              />
+              
+              {/* Local Video Picture-in-Picture */}
+              <div className="absolute bottom-4 right-4 h-32 w-48 overflow-hidden rounded-lg border-2 border-[hsl(228,6%,30%)] bg-black shadow-lg">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+              </div>
+
+              {callState.status === "calling" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
+                  <Phone className="mb-4 h-12 w-12 animate-pulse text-white" />
+                  <h2 className="text-2xl font-bold text-white">Calling {callState.peerName}...</h2>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Call Controls */}
+          <div className="flex shrink-0 items-center justify-center gap-4 bg-[hsl(228,6%,10%)] p-6">
+            <button
+              onClick={endCall}
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-[hsl(0,60%,50%)] transition hover:bg-[hsl(0,60%,60%)] hover:scale-105"
+              title="Hang Up"
+            >
+              <PhoneOff className="h-6 w-6 text-white" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-3 py-4 md:px-4">

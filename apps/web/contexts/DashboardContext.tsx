@@ -82,6 +82,18 @@ export interface DashboardContextType {
   createGroup: (name: string, description?: string) => Promise<boolean>;
   addMemberToGroup: (groupId: string, memberId: string) => Promise<boolean>;
   handleLogout: () => void;
+  
+  // WebRTC
+  callState: {
+    status: "idle" | "incoming" | "calling" | "connected";
+    peerId: string | null;
+    peerName: string | null;
+  };
+  startCall: (targetUserId: string, targetName: string) => void;
+  acceptCall: () => void;
+  endCall: () => void;
+  localVideoRef: React.RefObject<HTMLVideoElement>;
+  remoteVideoRef: React.RefObject<HTMLVideoElement>;
 }
 
 const DashboardContext = createContext<DashboardContextType | undefined>(

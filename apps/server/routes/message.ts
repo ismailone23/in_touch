@@ -112,6 +112,8 @@ app.get("/group/:groupId", async (c) => {
   if (!isMember.length) {
     return c.json({ error: "Not a member of this group" }, 403);
   }
+  // const limit = Number(c.req.query("limit")) || 20;
+  // const cursor = c.req.query("cursor");
 
   const msgs = await db
     .select()
@@ -120,6 +122,5 @@ app.get("/group/:groupId", async (c) => {
 
   return c.json(msgs);
 });
-
 
 export default app;

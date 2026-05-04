@@ -279,8 +279,29 @@ Bun.serve({
         return;
       }
 
-      if (!data.type || !data.content?.trim()) {
-        ws.send(JSON.stringify({ type: "error", message: "Message required" }));
+      if (!data.type) {
+        ws.send(JSON.stringify({ type: "error", message: "Message type required" }));
+        return;
+      }
+
+      // WebRTC Signaling
+      if (
+        data.type === "call_offer" ||
+        data.type === "call_answer" ||
+        data.type === "ice_candidate"
+      ) {
+        if (!data.to) return;
+        // Forward the signaling message directly to the recipient
+        sendToUser(data.to, {
+          type: data.type,
+          data: { ...data, from: userId },
+        });
+        return;
+      }
+
+      // Regular chat messages
+      if (!data.content?.trim()) {
+        ws.send(JSON.stringify({ type: "error", message: "Message content required" }));
         return;
       }
 
