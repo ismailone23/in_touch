@@ -16,8 +16,11 @@ const limiter = rateLimiter({
   windowMs: 5 * 60 * 1000, // 5 minutes
   limit: 100, // Limit each IP to 100 requests per window
   standardHeaders: "draft-6", // draft-6: RateLimit-* headers
-  keyGenerator: (c) => c.req.header("x-forwarded-for") || c.req.header("cf-connecting-ip") || "anonymous",
-  message: "Too many requests from this IP, please try again later."
+  keyGenerator: (c) =>
+    c.req.header("x-forwarded-for") ||
+    c.req.header("cf-connecting-ip") ||
+    "anonymous",
+  message: "Too many requests from this IP, please try again later.",
 });
 
 app.use("*", limiter);
@@ -193,16 +196,12 @@ Bun.serve({
         const token =
           url.searchParams.get("token") ||
           readCookieValue(req.headers.get("cookie"), "token");
-        console.log("WS upgrade attempt, token present:", !!token); // add this
 
         if (!token) {
-          console.log("WS rejected: no token"); // add this
-
           return new Response("Unauthorized", { status: 401 });
         }
 
         const userId = verifyUserId(token);
-        console.log("WS upgrade for userId:", userId); // add this
 
         const origin = req.headers.get("origin") ?? "";
         const isAllowed = allowedOrigins.includes(origin);
@@ -245,10 +244,12 @@ Bun.serve({
 
         // Send current online users to this new connection
         const onlineUsers = getOnlineUserIds();
-        ws.send(JSON.stringify({
-          type: "presence_list",
-          data: { onlineUsers },
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "presence_list",
+            data: { onlineUsers },
+          }),
+        );
       }
     },
 
@@ -280,7 +281,9 @@ Bun.serve({
       }
 
       if (!data.type) {
-        ws.send(JSON.stringify({ type: "error", message: "Message type required" }));
+        ws.send(
+          JSON.stringify({ type: "error", message: "Message type required" }),
+        );
         return;
       }
 
@@ -301,7 +304,12 @@ Bun.serve({
 
       // Regular chat messages
       if (!data.content?.trim()) {
-        ws.send(JSON.stringify({ type: "error", message: "Message content required" }));
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Message content required",
+          }),
+        );
         return;
       }
 
